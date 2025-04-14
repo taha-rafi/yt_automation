@@ -31,14 +31,14 @@ def create_default_background(width=1080, height=1920):
     for y in range(height):
         color = int(255 * (1 - y/height))  # Gradient from white to black
         background[y, :] = [color, color, color]
-    
+
     # Add some style - simple rectangle in the middle
     margin = 100
-    cv2.rectangle(background, 
+    cv2.rectangle(background,
                  (margin, height//2 - 200),
                  (width - margin, height//2 + 200),
                  (0, 0, 0), 2)
-    
+
     return background
 
 def create_video(background_image, audio_file, output_file):
@@ -58,11 +58,11 @@ def create_video(background_image, audio_file, output_file):
 
     target_width = 1080
     target_height = 1920
-    
+
     # Resize image maintaining aspect ratio and add black padding
     img_aspect = img.shape[1] / img.shape[0]
     target_aspect = target_width / target_height
-    
+
     if img_aspect > target_aspect:
         # Image is wider than target
         new_width = target_width
@@ -79,10 +79,10 @@ def create_video(background_image, audio_file, output_file):
         padding_right = target_width - new_width - padding_left
         padding_top = 0
         padding_bottom = 0
-    
+
     # Resize image
     img = cv2.resize(img, (new_width, new_height))
-    
+
     # Add padding
     img = cv2.copyMakeBorder(
         img,
@@ -115,7 +115,7 @@ def create_video(background_image, audio_file, output_file):
     # Combine video with audio using ffmpeg
     input_video = ffmpeg.input(temp_video)
     input_audio = ffmpeg.input(audio_file)
-    
+
     # Set appropriate encoding parameters for YouTube Shorts
     ffmpeg.output(
         input_video,

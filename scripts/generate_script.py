@@ -45,7 +45,7 @@ def get_random_quote(category=None):
         # If no category specified or invalid category, choose from all categories
         category = random.choice(list(QUOTES.keys()))
         quotes_list = QUOTES[category]
-    
+
     quote = random.choice(quotes_list)
     return quote, category
 
@@ -55,20 +55,20 @@ def generate_title_and_description(quote, category):
     """
     # Get current date for the description
     current_date = datetime.now().strftime("%B %d, %Y")
-    
+
     # Create title with category and emoji
     emojis = {
         'motivation': '🔥',
         'success': '⭐',
         'mindset': '🧠'
     }
-    
+
     title = f"{emojis.get(category, '✨')} {category.title()} Quote of the Day #Shorts"
-    
+
     # Create description with hashtags
     description = f"{quote}\n\n📅 {current_date}\n\n"
     description += f"#motivation #{category} #inspirational #quotes #viral #trending #shorts"
-    
+
     return title, description
 
 if __name__ == "__main__":

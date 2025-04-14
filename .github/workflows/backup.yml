@@ -11,14 +11,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-      
+
     - name: Commit files
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git add .
         git commit -m "Automated backup $(date +'%Y-%m-%d %H:%M:%S')" || echo "No changes to commit"
-        
+
     - name: Push changes
       uses: ad-m/github-push-action@master
       with:

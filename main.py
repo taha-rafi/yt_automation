@@ -24,39 +24,39 @@ def main():
     try:
         # Get the absolute path of the project root
         project_root = Path(__file__).parent.absolute()
-        
+
         # Ensure directories exist
         ensure_directories()
-        
+
         # Generate paths for output files
         paths = generate_output_paths()
-        
+
         # Step 1: Generate a random motivational quote and metadata
         quote, category = get_random_quote()
         title, description = generate_title_and_description(quote, category)
         print(f"Generated Quote ({category}): {quote}")
-        
+
         # Step 2: Convert quote to speech
         print("Converting text to speech...")
         text_to_speech(quote, paths['audio'])
-        
+
         # Step 3: Create video with audio and background image
         print("Creating video...")
         background_image = str(project_root / "assets" / "background.jpg")
         if not os.path.exists(background_image):
             raise FileNotFoundError(f"Background image not found: {background_image}")
-        
+
         create_video(background_image, paths['audio'], paths['video'])
-        
+
         # Step 4: Upload to YouTube (placeholder)
         print("Uploading to YouTube...")
         upload_to_youtube(paths['video'], title, description)
-        
+
         print("\nProcess completed successfully!")
         print(f"Video saved as: {paths['video']}")
         print(f"Title: {title}")
         print(f"Category: {category}")
-        
+
     except FileNotFoundError as e:
         print(f"Error: {e}")
         sys.exit(1)
