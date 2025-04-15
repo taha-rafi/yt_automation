@@ -1,12 +1,13 @@
 import schedule
 import time
 import asyncio
+import json
 from pathlib import Path
 from datetime import datetime
 import os
 from scripts.ai_generator import AIScriptGenerator
 from scripts.text_to_speech import text_to_speech
-from scripts.create_video import create_video
+from scripts.online_video_creator import VideoCreator
 from scripts.upload_youtube import upload_to_youtube
 from scripts.approval_system import ApprovalSystem
 
@@ -16,6 +17,7 @@ class AutomatedYouTubeShorts:
         self.ai_generator = AIScriptGenerator()
         self.approval_system = ApprovalSystem(telegram_token)
         self.test_mode = test_mode
+        self.video_creator = VideoCreator()
         self.ensure_directories()
 
     def ensure_directories(self):
@@ -55,10 +57,10 @@ class AutomatedYouTubeShorts:
             print("Converting to speech...")
             text_to_speech(quote, paths['audio'])
 
-            # Create video
+            # Create video using moviepy
             print("Creating video...")
-            background_image = str(self.project_root / "assets" / "background.jpg")
-            create_video(background_image, paths['audio'], paths['video'])
+            if not self.video_creator.create_video(quote, paths['audio'], paths['video']):
+                raise RuntimeError("Failed to create video")
 
             # Request approval
             print("Requesting approval...")

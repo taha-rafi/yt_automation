@@ -1,24 +1,17 @@
-from transformers import pipeline, set_seed
 import random
 import os
+import json
 from pathlib import Path
+from .qwen_ai import QwenAI
 
 class AIScriptGenerator:
     def __init__(self):
-        # Set cache directory in the project folder
-        cache_dir = Path(__file__).parent.parent / 'model_cache'
-        os.environ['TRANSFORMERS_CACHE'] = str(cache_dir)
-        os.makedirs(cache_dir, exist_ok=True)
-
-        # Use a smaller model for faster generation
-        print("Loading AI model (this may take a moment the first time)...")
-        self.generator = pipeline(
-            'text-generation',
-            model='distilgpt2',
-            device=-1  # Use CPU
-        )
-        set_seed(42)  # For reproducibility
-
+        # Load config
+        config_path = Path(__file__).parent.parent / 'config.json'
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        
+        self.qwen = QwenAI(config['openrouter_api_key'])
         # Topics for variety
         self.topics = [
             "success", "motivation", "personal growth",
@@ -27,51 +20,32 @@ class AIScriptGenerator:
             "achievement", "mindset", "determination"
         ]
 
-    def _clean_generated_text(self, text, prefix=""):
+    def _clean_generated_text(self, text):
         """Clean up generated text"""
-        # Remove the prefix/prompt if present
-        text = text.replace(prefix, "").strip()
-
-        # Clean up quotation marks
-        if text.count('"') % 2 == 1:
-            text = text.split('"')[1] if '"' in text else text
+        # Remove any quotes
+        text = text.strip().strip('"').strip("'").strip()
 
         # Ensure proper sentence ending
         if not text.endswith(('.', '!', '?')):
-            # Find the last complete sentence
-            last_sentence = text.split('.')
-            if len(last_sentence) > 1:
-                text = last_sentence[0] + '.'
-            else:
-                text += '.'
+            text += '.'
 
-        return text.strip()
+        return text
 
     def generate_quote(self):
-        """Generate an inspirational quote using AI"""
+        """Generate an inspirational quote using Qwen AI"""
         topic = random.choice(self.topics)
-        prompt = f"Write an inspiring quote about {topic} in one sentence:"
 
         try:
-            # Generate text with parameters tuned for quotes
-            result = self.generator(
-                prompt,
-                max_length=50,
-                num_return_sequences=1,
-                temperature=0.7,
-                top_k=50,
-                do_sample=True,
-                truncation=True
-            )
+            # Generate quote using Qwen AI
+            quote = self.qwen.generate_creative_quote(topic)
 
-            quote = self._clean_generated_text(result[0]['generated_text'], prompt)
+            if quote:
+                quote = self._clean_generated_text(quote)
+                return quote, topic
 
-            # Fallback to traditional quotes if generated text is too short
-            if len(quote) < 20:
-                from .generate_script import get_random_quote
-                return get_random_quote()
-
-            return quote, topic
+            # Fallback to traditional quotes if AI fails
+            from .generate_script import get_random_quote
+            return get_random_quote()
 
         except Exception as e:
             print(f"AI generation failed: {e}")
@@ -80,26 +54,19 @@ class AIScriptGenerator:
             return get_random_quote()
 
     def generate_variation(self, seed_quote):
-        """Generate a variation of an existing quote"""
-        prompt = f"Rewrite this quote differently: '{seed_quote}'"
-
+        """Generate a variation of an existing quote using Qwen AI"""
         try:
-            result = self.generator(
-                prompt,
-                max_length=50,
-                num_return_sequences=1,
-                temperature=0.8,
-                top_k=50,
-                do_sample=True
-            )
+            # We can use the same creative quote generation with the original quote as context
+            variation = self.qwen.generate_creative_quote(f"Create a variation of this quote: {seed_quote}")
 
-            variation = self._clean_generated_text(result[0]['generated_text'], prompt)
+            if variation:
+                variation = self._clean_generated_text(variation)
+                # If variation is too similar or too short, return original
+                if len(variation) < 20 or variation.lower() == seed_quote.lower():
+                    return seed_quote
+                return variation
 
-            # If variation is too similar or too short, return original
-            if len(variation) < 20 or variation.lower() == seed_quote.lower():
-                return seed_quote
-
-            return variation
+            return seed_quote
 
         except Exception as e:
             print(f"Variation generation failed: {e}")
