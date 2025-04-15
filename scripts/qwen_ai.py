@@ -9,6 +9,7 @@ import io
 import ffmpeg
 import subprocess
 from pathlib import Path
+from scripts.utils import logger, retry_api_call, get_random_background_asset
 
 class QwenAI:
     def __init__(self, api_key):
@@ -94,26 +95,59 @@ class QwenAI:
 
         return image
 
-    def generate_video(self, text, audio_path, output_path):
-        """Generate a video with text overlay and background"""
+    def generate_video(self, text, audio_path, output_path, progress_callback=None):
+        """Generate a video with text overlay and background with progress tracking"""
         try:
-            print("Creating base image...")
-            # Create base image with gradient
-            base_image = self._create_gradient_background()
+            if progress_callback:
+                progress_callback(0.1)  # Starting
+            
+            logger.info("Creating video with text overlay...")
+            
+            # Get random background asset
+            background_path = get_random_background_asset()
+            if not background_path:
+                logger.warning("No background asset found, creating default gradient")
+                background_image = self._create_gradient_background()
+            else:
+                try:
+                    if background_path.endswith(('.mp4', '.mov', '.avi')):
+                        # Handle video background (future implementation)
+                        background_image = self._create_gradient_background()
+                        logger.info("Video backgrounds not yet implemented, using gradient")
+                    else:
+                        # Load image background
+                        background_image = Image.open(background_path)
+                        # Resize to match dimensions
+                        background_image = background_image.resize((self.width, self.height))
+                        logger.info(f"Using background image: {background_path}")
+                except Exception as e:
+                    logger.error(f"Error loading background asset: {e}")
+                    background_image = self._create_gradient_background()
 
-            print("Adding text overlay...")
-            # Add text overlay
-            final_image = self._add_text_to_image(base_image, text)
+            if progress_callback:
+                progress_callback(0.2)  # Background loaded
+
+            logger.info("Adding text overlay...")
+            final_image = self._add_text_to_image(background_image, text)
+
+            if progress_callback:
+                progress_callback(0.3)  # Text added
 
             # Save temporary image
             temp_image_path = "temp_frame.jpg"
             temp_video_path = "temp_video.mp4"
             final_image.save(temp_image_path)
 
+            if progress_callback:
+                progress_callback(0.4)  # Image saved
+
             print("Creating video from image...")
             # Get audio duration using ffprobe
             probe = ffmpeg.probe(audio_path)
             duration = float(probe['format']['duration'])
+
+            if progress_callback:
+                progress_callback(0.5)  # Duration calculated
 
             # Create video from image using ffmpeg
             (
@@ -123,6 +157,9 @@ class QwenAI:
                 .overwrite_output()
                 .run(capture_stdout=True, capture_stderr=True)
             )
+
+            if progress_callback:
+                progress_callback(0.7)  # Base video created
 
             print("Adding audio to video...")
             # Add audio to video
@@ -140,9 +177,15 @@ class QwenAI:
                 .run(capture_stdout=True, capture_stderr=True)
             )
 
+            if progress_callback:
+                progress_callback(0.9)  # Audio added
+
             # Cleanup temporary files
             os.remove(temp_image_path)
             os.remove(temp_video_path)
+
+            if progress_callback:
+                progress_callback(1.0)  # Complete
 
             return True
 
@@ -154,8 +197,9 @@ class QwenAI:
                 os.remove(temp_video_path)
             return False
 
+    @retry_api_call(max_retries=3, delay=2, backoff=2)
     def generate_creative_quote(self, topic):
-        """Generate a creative quote using Qwen AI"""
+        """Generate a creative quote using Qwen AI with retries"""
         try:
             from openai import OpenAI
             if self.client is None:
@@ -164,6 +208,7 @@ class QwenAI:
                     api_key=self.api_key
                 )
 
+            logger.info(f"Generating creative quote about {topic}...")
             completion = self.client.chat.completions.create(
                 extra_headers={
                     "HTTP-Referer": "https://youtube-shorts-generator.com",
@@ -188,8 +233,9 @@ class QwenAI:
 
             # Clean up the quote
             quote = quote.strip().strip('"').strip()
+            logger.info(f"Generated quote: {quote}")
             return quote
 
         except Exception as e:
-            print(f"Error in Qwen AI quote generation: {e}")
-            return None
+            logger.error(f"Error in Qwen AI quote generation: {e}")
+            raise  # Re-raise for retry mechanism

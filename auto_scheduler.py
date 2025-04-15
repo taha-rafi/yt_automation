@@ -12,54 +12,70 @@ from scripts.upload_youtube import upload_to_youtube
 from scripts.approval_system import ApprovalSystem
 
 class AutomatedYouTubeShorts:
-    def __init__(self, telegram_token, test_mode=False):
+    def __init__(self):
         self.project_root = Path(__file__).parent.absolute()
+        self.load_config()
         self.ai_generator = AIScriptGenerator()
-        self.approval_system = ApprovalSystem(telegram_token)
-        self.test_mode = test_mode
+        self.approval_system = ApprovalSystem(self.config['telegram_token'])
         self.video_creator = VideoCreator()
         self.ensure_directories()
+        self.failed_attempts = 0
+        self.max_failed_attempts = 3
+
+    def load_config(self):
+        """Load configuration from config.json"""
+        config_path = self.project_root / 'config.json'
+        try:
+            with open(config_path, 'r') as f:
+                self.config = json.load(f)
+        except Exception as e:
+            print(f"Error loading config: {e}")
+            self.config = {
+                'telegram_token': '',
+                'openrouter_api_key': '',
+                'auto_approve_after': 30
+            }
 
     def ensure_directories(self):
         """Ensure all required directories exist"""
-        os.makedirs('output', exist_ok=True)
-        os.makedirs('assets', exist_ok=True)
-        os.makedirs('approved', exist_ok=True)
-        os.makedirs('rejected', exist_ok=True)
+        for dir_name in ['output', 'assets', 'approved', 'rejected']:
+            os.makedirs(self.project_root / dir_name, exist_ok=True)
 
     def generate_paths(self):
         """Generate unique paths for files"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return {
-            'audio': f"output/speech_{timestamp}.mp3",
-            'video': f"output/video_{timestamp}.mp4"
+            'audio': self.project_root / 'output' / f"speech_{timestamp}.mp3",
+            'video': self.project_root / 'output' / f"video_{timestamp}.mp4"
         }
 
     async def create_and_approve_video(self):
-        """Create a video and get approval"""
+        """Create a video and get approval with improved error handling"""
         try:
             # Generate paths
             paths = self.generate_paths()
 
             # Generate AI quote
             quote, topic = self.ai_generator.generate_quote()
+            if not quote:
+                raise ValueError("Failed to generate quote")
             print(f"\nGenerated Quote ({topic}): {quote}")
 
             # Create title and description
             title = f"🎯 AI-Generated {topic.title()} Quote #Shorts"
             description = f"{quote}\n\n"
             description += f"🤖 AI-Generated Wisdom | {datetime.now().strftime('%B %d, %Y')}\n\n"
-            # Generate unique hashtags
             hashtags = list(set([topic, "motivation", "inspirational", "quotes", "shorts"]))
             description += " ".join([f"#{tag}" for tag in hashtags])
 
             # Generate speech
             print("Converting to speech...")
-            text_to_speech(quote, paths['audio'])
+            if not text_to_speech(quote, str(paths['audio'])):
+                raise RuntimeError("Failed to generate speech")
 
-            # Create video using moviepy
+            # Create video
             print("Creating video...")
-            if not self.video_creator.create_video(quote, paths['audio'], paths['video']):
+            if not self.video_creator.create_video(quote, str(paths['audio']), str(paths['video'])):
                 raise RuntimeError("Failed to create video")
 
             # Request approval
@@ -68,26 +84,37 @@ class AutomatedYouTubeShorts:
                 'title': title,
                 'category': topic,
                 'quote': quote,
-                'video_path': paths['video']
+                'video_path': str(paths['video'])
             }
 
             approved = await self.approval_system.request_approval(video_info)
 
             if approved:
                 print("Video approved! Uploading to YouTube...")
-                upload_to_youtube(paths['video'], title, description)
-                # Move to approved folder
-                os.rename(paths['video'], f"approved/video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4")
+                if upload_to_youtube(str(paths['video']), title, description):
+                    print("Upload successful!")
+                    final_path = self.project_root / 'approved' / f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+                    os.rename(paths['video'], final_path)
+                    self.failed_attempts = 0  # Reset counter on success
+                else:
+                    raise RuntimeError("Failed to upload to YouTube")
             else:
                 print("Video rejected.")
-                # Move to rejected folder
-                os.rename(paths['video'], f"rejected/video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4")
+                rejected_path = self.project_root / 'rejected' / f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+                os.rename(paths['video'], rejected_path)
 
             # Clean up audio file
-            os.remove(paths['audio'])
+            if os.path.exists(paths['audio']):
+                os.remove(paths['audio'])
 
         except Exception as e:
             print(f"Error in video creation process: {e}")
+            self.failed_attempts += 1
+            if self.failed_attempts >= self.max_failed_attempts:
+                print("Too many failed attempts. Pausing for 1 hour...")
+                await asyncio.sleep(3600)  # 1 hour
+                self.failed_attempts = 0
+            raise
 
     async def run_test(self):
         """Run a single video creation test"""
@@ -103,9 +130,9 @@ class AutomatedYouTubeShorts:
             )
         print(f"Scheduled video creation for: {', '.join(times)}")
 
-    def run(self):
+    def run(self, test_mode=False):
         """Run the automated system"""
-        if self.test_mode:
+        if test_mode:
             print("Starting test mode...")
             asyncio.run(self.run_test())
             return
@@ -114,18 +141,24 @@ class AutomatedYouTubeShorts:
         print("Press Ctrl+C to stop")
 
         while True:
-            schedule.run_pending()
-            time.sleep(60)
+            try:
+                schedule.run_pending()
+                time.sleep(60)
+            except KeyboardInterrupt:
+                print("\nShutting down gracefully...")
+                break
+            except Exception as e:
+                print(f"Error in main loop: {e}")
+                time.sleep(60)  # Wait a minute before retrying
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='YouTube Shorts Automation')
-    parser.add_argument('--token', help='Telegram Bot Token', required=True)
     parser.add_argument('--test', action='store_true', help='Run in test mode')
     args = parser.parse_args()
 
     # Create automation system
-    auto_system = AutomatedYouTubeShorts(args.token, test_mode=args.test)
+    auto_system = AutomatedYouTubeShorts()
 
     if not args.test:
         # Schedule videos at specific times (24-hour format)
@@ -133,4 +166,4 @@ if __name__ == "__main__":
         auto_system.schedule_videos(posting_times)
 
     # Run the system
-    auto_system.run()
+    auto_system.run(test_mode=args.test)

@@ -4,6 +4,8 @@ import json
 import os
 import asyncio
 from datetime import datetime
+from openai import OpenAI
+from pathlib import Path
 
 class ApprovalSystem:
     def __init__(self, token):
@@ -11,6 +13,7 @@ class ApprovalSystem:
         self.pending_approvals = {}
         self.config_file = 'config.json'
         self.load_config()
+        self.openrouter_client = None
 
     def load_config(self):
         """Load configuration including admin chat IDs"""
@@ -19,8 +22,9 @@ class ApprovalSystem:
                 self.config = json.load(f)
         else:
             self.config = {
-                'admin_chat_ids': [],  # Add your Telegram chat ID here
-                'auto_approve_after': 30  # Minutes to wait before auto-approval
+                'admin_chat_ids': [],
+                'auto_approve_after': 30,
+                'openrouter_api_key': ''
             }
             self.save_config()
 
@@ -61,10 +65,45 @@ class ApprovalSystem:
 
         await update.message.reply_text(status_text)
 
+    async def check_content_moderation(self, text):
+        """Check content using OpenRouter's moderation capabilities"""
+        try:
+            if self.openrouter_client is None:
+                self.openrouter_client = OpenAI(
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key=self.config['openrouter_api_key']
+                )
+
+            # Use OpenRouter's moderation endpoint
+            response = self.openrouter_client.moderations.create(
+                input=text
+            )
+
+            # Check moderation results
+            if response.results[0].flagged:
+                print("Content flagged by moderation:")
+                for category, flagged in response.results[0].categories.items():
+                    if flagged:
+                        print(f"- {category}")
+                return False
+            return True
+
+        except Exception as e:
+            print(f"Moderation check failed: {e}")
+            return True  # Default to manual approval if moderation fails
+
     async def request_approval(self, video_info):
-        """Request approval for a video"""
+        """Request approval for a video with content moderation"""
+        # First check content with OpenRouter moderation
+        content_to_check = f"{video_info['title']}\n{video_info['quote']}"
+        moderation_passed = await self.check_content_moderation(content_to_check)
+
+        if not moderation_passed:
+            print("Content rejected by automatic moderation")
+            return False
+
         if not self.config['admin_chat_ids']:
-            print("No admin chat IDs configured. Auto-approving...")
+            print("No admin chat IDs configured. Auto-approving moderated content...")
             return True
 
         video_id = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -1,7 +1,9 @@
 import os
 import json
 from pathlib import Path
-from .qwen_ai import QwenAI
+from tqdm import tqdm
+from scripts.qwen_ai import QwenAI
+from scripts.utils import logger
 
 class VideoCreator:
     def __init__(self):
@@ -13,14 +15,29 @@ class VideoCreator:
         self.qwen = QwenAI(config['openrouter_api_key'])
 
     def create_video(self, quote_text, audio_file, output_file):
-        """Create a video using OpenRouter API"""
+        """Create a video using OpenRouter API with progress tracking"""
         try:
-            print("Generating video with OpenRouter API...")
-            success = self.qwen.generate_video(quote_text, audio_file, output_file)
-            return success
+            logger.info("Starting video creation process...")
+            
+            # Create progress bar
+            with tqdm(total=100, desc="Creating Video", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}") as pbar:
+                pbar.update(10)
+                logger.info("Initializing video generation...")
+                
+                # Start video generation
+                success = self.qwen.generate_video(quote_text, audio_file, output_file, 
+                                                progress_callback=lambda p: pbar.update(int(p * 80)))
+                
+                if success:
+                    pbar.update(100 - pbar.n)  # Ensure we reach 100%
+                    logger.info("Video created successfully!")
+                    return True
+                else:
+                    logger.error("Failed to create video")
+                    return False
 
         except Exception as e:
-            print(f"Error creating video: {e}")
+            logger.error(f"Error creating video: {e}")
             return False
 
 if __name__ == "__main__":

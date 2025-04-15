@@ -1,77 +1,79 @@
 import os
 import sys
-import json
 from datetime import datetime
-from pathlib import Path
-from scripts.generate_script import get_random_quote, generate_title_and_description
+from scripts.utils import setup_logging, ensure_directories, clean_old_files, load_config
+from scripts.ai_generator import AIScriptGenerator
 from scripts.text_to_speech import text_to_speech
 from scripts.online_video_creator import VideoCreator
 from scripts.upload_youtube import upload_to_youtube
 
-def load_config():
-    """Load configuration from config.json"""
-    if os.path.exists('config.json'):
-        with open('config.json', 'r') as f:
-            return json.load(f)
-    else:
-        config = {
-            'bannerbear_api_key': '',  # Add your Bannerbear API key here
-            'admin_chat_ids': [],
-            'auto_approve_after': 30
-        }
-        with open('config.json', 'w') as f:
-            json.dump(config, f, indent=4)
-        return config
-
-def ensure_directories():
-    """Ensure all required directories exist"""
-    os.makedirs('output', exist_ok=True)
-    os.makedirs('assets', exist_ok=True)
-
-def generate_output_paths():
-    """Generate unique output paths for files based on timestamp"""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return {
-        'audio': f"output/speech_{timestamp}.mp3",
-        'video': f"output/video_{timestamp}.mp4"
-    }
+# Initialize logging
+logger = setup_logging()
 
 def main():
     try:
-        # Initialize video creator
+        logger.info("Starting YouTube Shorts Generator")
+        
+        # Initialize all required directories
+        ensure_directories()
+        
+        # Clean old files
+        clean_old_files()
+        
+        # Load configuration
+        config = load_config()
+        if not config:
+            logger.error("Failed to load configuration")
+            sys.exit(1)
+
+        # Initialize components
         video_creator = VideoCreator()
 
-        # Ensure directories exist
-        ensure_directories()
-
         # Generate paths for output files
-        paths = generate_output_paths()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        paths = {
+            'audio': f"output/speech_{timestamp}.mp3",
+            'video': f"output/video_{timestamp}.mp4"
+        }
 
-        # Step 1: Generate a random motivational quote and metadata
-        quote, category = get_random_quote()
-        title, description = generate_title_and_description(quote, category)
-        print(f"Generated Quote ({category}): {quote}")
+        # Step 1: Generate quote using OpenRouter API
+        logger.info("Generating quote...")
+        ai_generator = AIScriptGenerator()
+        quote, category = ai_generator.generate_quote()
+        title = f"🎯 AI-Generated {category.title()} Quote #Shorts"
+        description = f"{quote}\n\n"
+        description += f"🤖 AI-Generated Wisdom | {datetime.now().strftime('%B %d, %Y')}\n\n"
+        description += " ".join([f"#{tag}" for tag in ["motivation", "inspiration", "quotes", "shorts", category]])
+        
+        logger.info(f"Generated Quote ({category}): {quote}")
 
-        # Step 2: Convert quote to speech
-        print("Converting text to speech...")
-        text_to_speech(quote, paths['audio'])
+        # Step 2: Convert quote to speech using OpenRouter
+        logger.info("Converting text to speech...")
+        if not text_to_speech(quote, paths['audio']):
+            raise RuntimeError("Failed to convert text to speech")
 
-        # Step 3: Create video using moviepy
-        print("Creating video...")
+        # Step 3: Create video using OpenRouter
+        logger.info("Creating video...")
         if not video_creator.create_video(quote, paths['audio'], paths['video']):
             raise RuntimeError("Failed to create video")
 
         # Step 4: Upload to YouTube
-        print("Uploading to YouTube...")
-        upload_to_youtube(paths['video'], title, description)
+        logger.info("Uploading to YouTube...")
+        if upload_to_youtube(paths['video'], title, description):
+            logger.info("Upload successful!")
+            logger.info(f"Title: {title}")
+            logger.info(f"Category: {category}")
+        else:
+            raise RuntimeError("Failed to upload video")
 
-        print("\nProcess completed successfully!")
-        print(f"Video saved as: {paths['video']}")
-        print(f"Title: {title}")
-        print(f"Category: {category}")
+        # Clean up temporary files
+        for path in paths.values():
+            if os.path.exists(path):
+                os.remove(path)
+                logger.info(f"Cleaned up temporary file: {path}")
 
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        logger.error(f"An error occurred: {e}", exc_info=True)
         sys.exit(1)
 
 if __name__ == "__main__":
