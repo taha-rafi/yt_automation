@@ -2,7 +2,7 @@ import os
 import sys
 import requests
 import json
-import base64
+from ollama import Client
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import io
@@ -12,20 +12,21 @@ from pathlib import Path
 from scripts.utils import logger, retry_api_call, get_random_background_asset
 
 class QwenAI:
-    def __init__(self, api_key):
-        self.client = None
-        self.api_key = api_key
+    def __init__(self, api_key=None):  # api_key is kept for backward compatibility
+        self.client = Client(host='http://localhost:11434')
+        self.model = "mistral"  # Using Mistral as the default model
         self.width = 1080
         self.height = 1920
         self.project_root = Path(__file__).parent.parent
         self.ffmpeg_path = str(self.project_root / 'bin' / 'ffmpeg' / 'ffmpeg.exe')
         self.temp_dir = self.project_root / 'output'
+        self.logger = logger
 
     def _create_gradient_background(self):
         """Create a gradient background image"""
         image = Image.new('RGB', (self.width, self.height))
         draw = ImageDraw.Draw(image)
-        
+
         for y in range(self.height):
             # Create a smooth gradient from dark to light blue
             r = int(20 + (y / self.height) * 40)
@@ -96,146 +97,82 @@ class QwenAI:
         return image
 
     def generate_video(self, text, audio_path, output_path, progress_callback=None):
-        """Generate a video with text overlay and background with progress tracking"""
+        """Generate a video with text overlay and audio."""
         try:
-            if progress_callback:
-                progress_callback(0.1)  # Starting
-            
-            logger.info("Creating video with text overlay...")
-            
-            # Get random background asset
-            background_path = get_random_background_asset()
-            if not background_path:
-                logger.warning("No background asset found, creating default gradient")
-                background_image = self._create_gradient_background()
-            else:
-                try:
-                    if background_path.endswith(('.mp4', '.mov', '.avi')):
-                        # Handle video background (future implementation)
-                        background_image = self._create_gradient_background()
-                        logger.info("Video backgrounds not yet implemented, using gradient")
-                    else:
-                        # Load image background
-                        background_image = Image.open(background_path)
-                        # Resize to match dimensions
-                        background_image = background_image.resize((self.width, self.height))
-                        logger.info(f"Using background image: {background_path}")
-                except Exception as e:
-                    logger.error(f"Error loading background asset: {e}")
-                    background_image = self._create_gradient_background()
-
-            if progress_callback:
-                progress_callback(0.2)  # Background loaded
-
-            logger.info("Adding text overlay...")
-            final_image = self._add_text_to_image(background_image, text)
-
-            if progress_callback:
-                progress_callback(0.3)  # Text added
-
-            # Save temporary image
-            temp_image_path = "temp_frame.jpg"
-            temp_video_path = "temp_video.mp4"
-            final_image.save(temp_image_path)
-
-            if progress_callback:
-                progress_callback(0.4)  # Image saved
-
             print("Creating video from image...")
-            # Get audio duration using ffprobe
+            self.logger.info("Creating video with text overlay...")
+
+            # Use a temp file in the same directory as the output
+            output_dir = os.path.dirname(output_path)
+            temp_video = os.path.join(output_dir, "temp_video.mp4")
+
+            # Create the video from the image
+            image = self._create_gradient_background()
+            image = self._add_text_to_image(image, text)
+            image.save(temp_video)
+
+            print("Adding audio to video...")
+            # Get audio duration
             probe = ffmpeg.probe(audio_path)
             duration = float(probe['format']['duration'])
 
-            if progress_callback:
-                progress_callback(0.5)  # Duration calculated
+            # Create video stream
+            try:
+                stream = ffmpeg.input(temp_video).video
+                audio = ffmpeg.input(audio_path).audio
 
-            # Create video from image using ffmpeg
-            (
-                ffmpeg
-                .input(temp_image_path, loop=1, t=duration)
-                .output(temp_video_path, vcodec='libx264', pix_fmt='yuv420p', r=30)
-                .overwrite_output()
-                .run(capture_stdout=True, capture_stderr=True)
-            )
+                # Combine video and audio
+                ffmpeg.output(
+                    stream,
+                    audio,
+                    output_path,
+                    vcodec='libx264',
+                    acodec='aac'
+                ).overwrite_output().run()
 
-            if progress_callback:
-                progress_callback(0.7)  # Base video created
+                # Clean up temp file
+                if os.path.exists(temp_video):
+                    os.remove(temp_video)
 
-            print("Adding audio to video...")
-            # Add audio to video
-            video = ffmpeg.input(temp_video_path)
-            audio = ffmpeg.input(audio_path)
-
-            # Combine video with audio
-            (
-                ffmpeg
-                .output(video, audio, output_path,
-                       vcodec='copy',
-                       acodec='aac',
-                       strict='experimental')
-                .overwrite_output()
-                .run(capture_stdout=True, capture_stderr=True)
-            )
-
-            if progress_callback:
-                progress_callback(0.9)  # Audio added
-
-            # Cleanup temporary files
-            os.remove(temp_image_path)
-            os.remove(temp_video_path)
-
-            if progress_callback:
-                progress_callback(1.0)  # Complete
-
-            return True
+                return True
+            except Exception as e:
+                print(f"Error in video generation: {str(e)}")
+                return False
 
         except Exception as e:
-            print(f"Error in video generation: {e}")
-            if os.path.exists(temp_image_path):
-                os.remove(temp_image_path)
-            if os.path.exists(temp_video_path):
-                os.remove(temp_video_path)
+            self.logger.error(f"Error generating video: {str(e)}")
             return False
 
-    @retry_api_call(max_retries=3, delay=2, backoff=2)
-    def generate_creative_quote(self, topic):
-        """Generate a creative quote using Qwen AI with retries"""
+    def generate_text(self, prompt, max_tokens=500):
         try:
-            from openai import OpenAI
-            if self.client is None:
-                self.client = OpenAI(
-                    base_url="https://openrouter.ai/api/v1",
-                    api_key=self.api_key
-                )
-
-            logger.info(f"Generating creative quote about {topic}...")
-            completion = self.client.chat.completions.create(
-                extra_headers={
-                    "HTTP-Referer": "https://youtube-shorts-generator.com",
-                    "X-Title": "YouTube Shorts Generator"
-                },
-                model="qwen/qwen2.5-72b-instruct:free",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a creative writer specializing in motivational and inspirational quotes."
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Create a unique and inspiring quote about {topic}. Make it concise and impactful."
-                    }
-                ]
+            response = self.client.generate(
+                model=self.model,
+                prompt=prompt,
+                max_tokens=max_tokens
             )
-
-            quote = completion.choices[0].message.content
-            if not quote:
-                raise Exception("No quote generated")
-
-            # Clean up the quote
-            quote = quote.strip().strip('"').strip()
-            logger.info(f"Generated quote: {quote}")
-            return quote
-
+            return response['response']
         except Exception as e:
-            logger.error(f"Error in Qwen AI quote generation: {e}")
-            raise  # Re-raise for retry mechanism
+            self.logger.error(f"Error generating text: {str(e)}")
+            return None
+
+    def generate_script(self, topic, style="informative and engaging", length="short"):
+        prompt = f"Write a {length} script about {topic}. The style should be {style}. "
+        prompt += "The script should be suitable for a vertical video format (YouTube Shorts/TikTok)."
+        
+        response = self.generate_text(prompt)
+        if response:
+            return response.strip()
+        return None
+
+    def continue_iteration(self, previous_response):
+        try:
+            response = self.client.generate(
+                model=self.model,
+                prompt=previous_response,
+                system="Continue from where you left off.",
+                stream=False
+            )
+            return response['response']
+        except Exception as e:
+            self.logger.error(f"Error continuing iteration: {str(e)}")
+            return None

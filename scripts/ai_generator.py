@@ -10,7 +10,7 @@ class AIScriptGenerator:
         config_path = Path(__file__).parent.parent / 'config.json'
         with open(config_path, 'r') as f:
             config = json.load(f)
-        
+
         self.qwen = QwenAI(config['openrouter_api_key'])
         # Topics for variety
         self.topics = [

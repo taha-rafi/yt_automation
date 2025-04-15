@@ -4,8 +4,9 @@ import json
 import os
 import asyncio
 from datetime import datetime
-from openai import OpenAI
 from pathlib import Path
+import requests
+from scripts.utils import logger
 
 class ApprovalSystem:
     def __init__(self, token):
@@ -13,7 +14,7 @@ class ApprovalSystem:
         self.pending_approvals = {}
         self.config_file = 'config.json'
         self.load_config()
-        self.openrouter_client = None
+        self.openrouter_api_key = self.config.get('openrouter_api_key', '')
 
     def load_config(self):
         """Load configuration including admin chat IDs"""
@@ -65,38 +66,56 @@ class ApprovalSystem:
 
         await update.message.reply_text(status_text)
 
-    async def check_content_moderation(self, text):
+    def check_content(self, text):
         """Check content using OpenRouter's moderation capabilities"""
         try:
-            if self.openrouter_client is None:
-                self.openrouter_client = OpenAI(
-                    base_url="https://openrouter.ai/api/v1",
-                    api_key=self.config['openrouter_api_key']
-                )
+            if not self.openrouter_api_key:
+                logger.error("OpenRouter API key not found in config")
+                return False
 
-            # Use OpenRouter's moderation endpoint
-            response = self.openrouter_client.moderations.create(
-                input=text
+            headers = {
+                "HTTP-Referer": "https://youtube-shorts-generator.com",
+                "X-Title": "YouTube Shorts Generator",
+                "Authorization": f"Bearer {self.openrouter_api_key}",
+                "Content-Type": "application/json"
+            }
+
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json={
+                    "model": "mistralai/mistral-7b-instruct:free",  # Using free Mistral model
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are a content moderator. Your job is to check if content is safe and appropriate. Respond with only 'ACCEPT' or 'REJECT'."
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Check if this content is safe and appropriate: {text}\nRespond with only ACCEPT or REJECT."
+                        }
+                    ]
+                }
             )
 
-            # Check moderation results
-            if response.results[0].flagged:
-                print("Content flagged by moderation:")
-                for category, flagged in response.results[0].categories.items():
-                    if flagged:
-                        print(f"- {category}")
+            if response.status_code != 200:
+                logger.error(f"OpenRouter API error: {response.text}")
                 return False
-            return True
+
+            data = response.json()
+            result = data['choices'][0]['message']['content'].strip().upper()
+
+            return result == "ACCEPT"
 
         except Exception as e:
-            print(f"Moderation check failed: {e}")
-            return True  # Default to manual approval if moderation fails
+            logger.error(f"Error in content moderation: {e}")
+            return False
 
     async def request_approval(self, video_info):
         """Request approval for a video with content moderation"""
         # First check content with OpenRouter moderation
         content_to_check = f"{video_info['title']}\n{video_info['quote']}"
-        moderation_passed = await self.check_content_moderation(content_to_check)
+        moderation_passed = self.check_content(content_to_check)
 
         if not moderation_passed:
             print("Content rejected by automatic moderation")

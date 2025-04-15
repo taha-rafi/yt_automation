@@ -13,13 +13,13 @@ logger = setup_logging()
 def main():
     try:
         logger.info("Starting YouTube Shorts Generator")
-        
+
         # Initialize all required directories
         ensure_directories()
-        
+
         # Clean old files
         clean_old_files()
-        
+
         # Load configuration
         config = load_config()
         if not config:
@@ -44,7 +44,7 @@ def main():
         description = f"{quote}\n\n"
         description += f"🤖 AI-Generated Wisdom | {datetime.now().strftime('%B %d, %Y')}\n\n"
         description += " ".join([f"#{tag}" for tag in ["motivation", "inspiration", "quotes", "shorts", category]])
-        
+
         logger.info(f"Generated Quote ({category}): {quote}")
 
         # Step 2: Convert quote to speech using OpenRouter

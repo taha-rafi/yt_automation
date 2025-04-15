@@ -16,9 +16,9 @@ def setup_logging():
     """Setup logging configuration with colored output"""
     log_dir = Path(__file__).parent.parent / 'logs'
     log_dir.mkdir(exist_ok=True)
-    
+
     log_file = log_dir / f"app_{datetime.now().strftime('%Y%m%d')}.log"
-    
+
     # Create color formatter
     formatter = colorlog.ColoredFormatter(
         "%(log_color)s%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -52,7 +52,7 @@ logger = setup_logging()
 def retry_api_call(max_retries=3, delay=1, backoff=2):
     """
     Decorator for retrying API calls with exponential backoff
-    
+
     Args:
         max_retries (int): Maximum number of retries
         delay (int): Initial delay in seconds
@@ -69,7 +69,7 @@ def retry_api_call(max_retries=3, delay=1, backoff=2):
                     if attempt == max_retries - 1:  # Last attempt
                         logger.error(f"Final retry failed: {e}")
                         raise  # Re-raise the last exception
-                    
+
                     logger.warning(f"Attempt {attempt + 1} failed: {e}")
                     logger.info(f"Retrying in {current_delay} seconds...")
                     time.sleep(current_delay)
@@ -88,7 +88,7 @@ def load_config():
         logger.error(f"Error loading config: {e}")
         return {}
 
-def ensure_ffmpeg():
+def get_config():
     """Download and setup portable ffmpeg if not already installed"""
     ffmpeg_dir = Path(__file__).parent.parent / 'bin' / 'ffmpeg'
     ffmpeg_exe = ffmpeg_dir / 'ffmpeg.exe'
@@ -149,21 +149,21 @@ def clean_old_files(max_age_days=7):
     try:
         project_root = Path(__file__).parent.parent
         current_time = datetime.now()
-        
+
         # Directories to clean
         dirs_to_clean = [
             project_root / 'output',
             project_root / 'logs'
         ]
-        
+
         for directory in dirs_to_clean:
             if not directory.exists():
                 continue
-                
+
             for file_path in directory.glob('*'):
                 if not file_path.is_file():
                     continue
-                    
+
                 file_age = (current_time - datetime.fromtimestamp(file_path.stat().st_mtime)).days
                 if file_age > max_age_days:
                     try:
@@ -171,7 +171,7 @@ def clean_old_files(max_age_days=7):
                         logger.info(f"Deleted old file: {file_path}")
                     except Exception as e:
                         logger.error(f"Error deleting {file_path}: {e}")
-                        
+
     except Exception as e:
         logger.error(f"Error in clean_old_files: {e}")
 
@@ -183,7 +183,7 @@ def ensure_directories():
     """Ensure all required directories exist"""
     project_root = get_project_root()
     directories = ['output', 'assets', 'approved', 'rejected', 'logs']
-    
+
     for dir_name in directories:
         dir_path = project_root / dir_name
         if not dir_path.exists():
@@ -194,18 +194,18 @@ def get_random_background_asset():
     """Get a random background video or image from assets directory"""
     project_root = get_project_root()
     backgrounds_dir = project_root / 'assets' / 'backgrounds'
-    
+
     # List all background assets
     video_files = list(backgrounds_dir.glob('*.mp4'))
     image_files = list(backgrounds_dir.glob('*.{jpg,jpeg,png}'))
-    
+
     if not video_files and not image_files:
         # Return default background image path if exists
         default_bg = project_root / 'assets' / 'background.jpg'
         if default_bg.exists():
             return str(default_bg)
         return None
-        
+
     # Prefer videos over images if available
     if video_files:
         return str(random.choice(video_files))
@@ -217,26 +217,26 @@ def ensure_background_assets():
         project_root = get_project_root()
         backgrounds_dir = project_root / 'assets' / 'backgrounds'
         backgrounds_dir.mkdir(exist_ok=True)
-        
+
         default_bg = project_root / 'assets' / 'background.jpg'
         if not default_bg.exists():
             # Create a simple gradient background as default
             from PIL import Image, ImageDraw
-            
+
             width = 1080
             height = 1920
             image = Image.new('RGB', (width, height))
             draw = ImageDraw.Draw(image)
-            
+
             for y in range(height):
                 r = int(20 + (y / height) * 40)
                 g = int(40 + (y / height) * 60)
                 b = int(80 + (y / height) * 100)
                 draw.line([(0, y), (width, y)], fill=(r, g, b))
-                
+
             image.save(default_bg)
             logger.info("Created default background image")
-            
+
     except Exception as e:
         logger.error(f"Error ensuring background assets: {e}")
 
