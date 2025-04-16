@@ -122,7 +122,7 @@ class QwenAI:
         return image
 
     def generate_video(self, text, audio_path, output_path, progress_callback=None):
-        """Generate a video with text overlay and animations using MoviePy."""
+        """Generate a video with text overlay and animations using MoviePy and Llama/Ollama image background."""
         try:
             print("Creating video with MoviePy...")
             self.logger.info("Creating animated video...")
@@ -131,79 +131,56 @@ class QwenAI:
             audio = AudioFileClip(audio_path)
             audio_duration = audio.duration
 
-            # Create a dynamic gradient background
-            def make_background_frame(t):
-                # Create gradient background with higher contrast
-                img = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-                
-                # Use darker, richer colors for better visibility
-                colors = [
-                    (15, 25, 35),   # Dark blue-black
-                    (30, 40, 60),   # Deep blue
-                    (45, 35, 55)    # Deep purple
-                ]
-                
-                # Calculate color transition
-                phase = (t / audio_duration) * 2 * np.pi
-                weights = [
-                    (np.sin(phase + i * 2 * np.pi / 3) + 1) / 2 
-                    for i in range(3)
-                ]
-                weights_sum = sum(weights)
-                weights = [w / weights_sum for w in weights]
-                
-                # Create smooth gradient
-                for y in range(self.height):
-                    progress = y / self.height
-                    color = [sum(w * c[i] for w, c in zip(weights, colors)) for i in range(3)]
-                    
-                    # Add subtle wave effect
-                    wave = np.sin(y / 30 + t * 1.5) * 3
-                    color = [min(255, max(0, c + wave)) for c in color]
-                    
-                    # Add vignette effect
-                    center_y = self.height / 2
-                    dist_y = abs(y - center_y) / (self.height / 2)
-                    vignette = 1 - (dist_y * 0.3)  # 30% darkening at edges
-                    color = [int(c * vignette) for c in color]
-                    
-                    img[y, :] = color
-                
-                # Add subtle particles
-                num_particles = 20
-                for i in range(num_particles):
-                    angle = (i / num_particles) * 2 * np.pi + t * 0.5
-                    radius = (self.width / 4) * (1 + np.sin(t + i * 0.2) * 0.1)
-                    x = int(self.width/2 + np.cos(angle) * radius)
-                    y = int(self.height/2 + np.sin(angle) * radius)
-                    
-                    if 0 <= y < self.height and 0 <= x < self.width:
-                        glow = np.array([255, 255, 255]) * 0.15  # 15% brightness
-                        img[max(0, y-2):min(self.height, y+3), 
-                            max(0, x-2):min(self.width, x+3)] += glow.astype(np.uint8)
-                
-                return img
+            # Generate a prompt for the background image based on the quote
+            image_prompt = f"Create a beautiful, abstract, vertical background image that visually represents this quote: '{text}'. No text, just mood, color, and feeling. 9:16 aspect ratio."
+            print("Generating background image with Ollama...")
+            response = None
+            try:
+                response = self.client.generate(
+                    model="llava",
+                    prompt=image_prompt,
+                    stream=False,
+                    options={
+                        "image_size": 1024
+                    }
+                )
+            except Exception as e:
+                print(f"Ollama image generation failed: {e}")
 
-            # Create background video clip
-            background = VideoClip(make_background_frame, duration=audio_duration)
+            background_img_path = os.path.join(os.path.dirname(output_path), 'background_llama.png')
+            background_clip = None
+            if response and 'images' in response:
+                import base64
+                image_data = base64.b64decode(response['images'][0])
+                with open(background_img_path, 'wb') as f:
+                    f.write(image_data)
+                # Use the generated image as the background
+                background_clip = ImageClip(background_img_path).resize(height=self.height).set_duration(audio_duration)
+                # Center crop to match width
+                w, h = background_clip.size
+                if w > self.width:
+                    x1 = (w - self.width) // 2
+                    background_clip = background_clip.crop(x1=x1, y1=0, x2=x1+self.width, y2=self.height)
+                else:
+                    background_clip = background_clip.resize((self.width, self.height))
+            else:
+                print("Falling back to gradient background...")
+                # Fallback: simple dark gradient
+                from moviepy.video.VideoClip import ColorClip
+                background_clip = ColorClip(size=(self.width, self.height), color=(20, 30, 45), duration=audio_duration)
 
             # Create PIL image for text with dynamic effects
             def make_text_frame(t):
-                # Create a new image for each frame
                 img = Image.new('RGBA', (self.width, self.height), (0, 0, 0, 0))
                 draw = ImageDraw.Draw(img)
-                
                 try:
                     font = ImageFont.truetype('C:/Windows/Fonts/arialbd.ttf', 80)
                 except:
                     font = ImageFont.load_default()
-                
-                # Split text into lines
                 words = text.split()
                 lines = []
                 current_line = []
                 max_width = self.width - 100
-                
                 for word in words:
                     test_line = ' '.join(current_line + [word])
                     bbox = draw.textbbox((0, 0), test_line, font=font)
@@ -215,92 +192,52 @@ class QwenAI:
                         current_line = [word]
                 if current_line:
                     lines.append(' '.join(current_line))
-                
-                # Calculate text position
                 line_spacing = 1.2
                 font_height = font.size
                 total_height = len(lines) * (font_height * line_spacing)
                 base_y = (self.height - total_height) // 2
-                
-                # Add subtle bounce effect
                 bounce_amount = 3
                 bounce_freq = 1.0
                 bounce_offset = bounce_amount * np.sin(t * 2 * np.pi * bounce_freq)
-                
-                # Calculate opacity for fade effect
                 opacity = 1.0
                 fade_duration = audio_duration * 0.15
                 if t < fade_duration:
                     opacity = (t / fade_duration) ** 0.5
                 elif t > audio_duration - fade_duration:
                     opacity = ((audio_duration - t) / fade_duration) ** 0.5
-                
                 y = base_y + bounce_offset
-                
-                # Draw each line
                 for line in lines:
                     bbox = draw.textbbox((0, 0), line, font=font)
                     text_width = bbox[2] - bbox[0]
                     x = (self.width - text_width) // 2
-                    
-                    # Draw shadow with higher contrast
                     shadow_dist = 3
                     shadow_alpha = int(100 * opacity)
                     shadow_color = (0, 0, 0, shadow_alpha)
                     for i in range(2):
-                        draw.text((x + shadow_dist + i, y + shadow_dist + i), 
-                                line, font=font, fill=shadow_color)
-                    
-                    # Draw main text with slight glow
+                        draw.text((x + shadow_dist + i, y + shadow_dist + i), line, font=font, fill=shadow_color)
                     text_color = (255, 255, 255, int(255 * opacity))
                     draw.text((x, y), line, font=font, fill=text_color)
-                    
                     y += font_height * line_spacing
-                
-                # Convert to numpy array with alpha handling
                 frame = np.array(img)
                 if frame.shape[2] == 4:
                     rgb = frame[..., :3]
                     alpha = frame[..., 3:4] / 255.0
                     return rgb * alpha + (1 - alpha) * 0
-                
                 return frame
-            
             txt_clip = VideoClip(make_text_frame, duration=audio_duration)
-            
             # Combine clips
-            video = CompositeVideoClip([background, txt_clip])
-            
-            # Add audio and match duration
-            video = video.set_duration(audio_duration)
-            video = video.set_audio(audio)
-            
-            # Write the result
-            video.write_videofile(
-                output_path,
-                fps=30,
-                codec='libx264',
-                audio_codec='aac',
-                preset='medium',  
-                bitrate='4000k',  
-                threads=4,  
-                ffmpeg_params=[
-                    '-profile:v', 'high',  
-                    '-level', '4.0',  
-                    '-pix_fmt', 'yuv420p',  
-                    '-movflags', '+faststart'  
-                ]
-            )
-
-            # Clean up
-            video.close()
+            video = CompositeVideoClip([background_clip, txt_clip])
+            # Set audio and write video
+            video.audio = audio
+            video.write_videofile(output_path, fps=24, audio_codec='aac')
             audio.close()
-
-            return True
-
+            print(f"Video successfully saved to {output_path}")
+            if progress_callback:
+                progress_callback(100)
         except Exception as e:
-            self.logger.error(f"Error generating video: {str(e)}")
-            return False
+            self.logger.error(f"Error generating video: {e}")
+            print(f"Error generating video: {e}")
+            raise
 
     def generate_text(self, prompt, max_tokens=500):
         try:

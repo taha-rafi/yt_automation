@@ -1,0 +1,23 @@
+{
+    "openai_api_key": "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",
+    "openrouter_api_key": "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",
+    "elevenlabs_api_key": "YOUR-ELEVENLABS-API-KEY",
+    "telegram_token": "",
+    "auto_approve_after": 30,
+    "admin_chat_ids": [],
+    "youtube": {
+        "upload_defaults": {
+            "privacy_status": "public",
+            "made_for_kids": false,
+            "tags": [
+                "shorts",
+                "motivation",
+                "inspiration"
+            ]
+        },
+        "retry": {
+            "max_attempts": 3,
+            "delay_seconds": 5
+        }
+    }
+}

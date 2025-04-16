@@ -1,6 +1,72 @@
 # YouTube Shorts Generator
 
-An automated system for generating and uploading YouTube Shorts using OpenRouter API integration.
+## Step-by-Step Guide to Run the Project
+
+### 1. Prerequisites
+- **Python 3.8+** (recommend using Python 3.10 or newer)
+- **pip** (Python package installer)
+- **FFmpeg** (will be downloaded automatically if missing)
+- **Ollama** (for AI models: https://ollama.com/download)
+- **Git** (to clone the repository)
+
+### 2. Clone the Repository
+```bash
+git clone https://github.com/taha-rafi/yt_automation.git
+cd yt_automation
+```
+
+### 3. Install Python Dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Download the LLaVA Model for Background Images
+- Open a new terminal and run:
+```bash
+ollama pull llava
+```
+- Wait for the download to complete (size: ~7GB)
+
+### 4b. Download the Mistral Model for Quote Generation
+- In your terminal, run:
+```bash
+ollama pull mistral
+```
+- This model is used for generating quotes and text responses.
+
+### 5. Configure API Keys and Credentials
+- Edit `config.json` and add your OpenRouter API key and (optionally) Telegram bot token.
+- For YouTube uploads, set up Google Cloud and download `credentials.json` to the project root (see Setup section above).
+
+### 6. (Optional) Add Background Assets
+- Place your own images in `assets/backgrounds/` if you want custom backgrounds.
+- If not, the script will use AI-generated or gradient backgrounds.
+
+### 7. Run the Script to Generate a Video
+```bash
+python main.py
+```
+- The script will generate a quote, synthesize speech, create a video with an AI-generated background, and (optionally) upload to YouTube.
+
+### 8. Troubleshooting
+- **Model not found:** If you see `model 'llava' not found`, make sure you ran `ollama pull llava` and that Ollama is running.
+- **set_audio error:** This is fixed in the latest code; update if you see this.
+- **Large file errors on GitHub:** ffmpeg and other binaries are now in `.gitignore`.
+- **Google API errors:** Make sure `credentials.json` is present and correct.
+
+### 9. Useful Commands
+- **Test mode:**
+  ```bash
+  python main.py --test
+  ```
+- **Scheduled mode:**
+  ```bash
+  python auto_scheduler.py
+  ```
+
+---
+
+For more customization and advanced usage, see the rest of this README and the code comments.
 
 ## Features
 
