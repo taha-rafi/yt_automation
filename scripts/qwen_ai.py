@@ -6,20 +6,22 @@ import numpy as np
 import io
 import subprocess
 import shutil
+import base64
 from pathlib import Path
 from scripts.utils import logger, retry_api_call, get_random_background_asset
 from ollama import Client
 from PIL import Image, ImageDraw, ImageFont
-from moviepy.video.VideoClip import VideoClip, ColorClip, ImageClip
-from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+from moviepy import VideoClip, ColorClip, ImageClip, CompositeVideoClip
 from moviepy.audio.AudioClip import AudioClip
 from moviepy.audio.io.AudioFileClip import AudioFileClip
+import torch
+from diffusers import StableDiffusionPipeline
 
 class QwenAI:
     def __init__(self, api_key=None):  # api_key is kept for backward compatibility
         self.logger = logger
         self.client = Client(host='http://localhost:11434')
-        self.model = "mistral"  # Using Mistral as the default model
+        self.model = "mistral:latest"  # Use explicit model tag
         self.width = 1080  # Width for portrait mode (9:16)
         self.height = 1920  # Height for portrait mode (9:16)
         self.project_root = Path(__file__).parent.parent
@@ -38,18 +40,20 @@ class QwenAI:
             raise RuntimeError("ffmpeg is required but not available")
 
     def _create_gradient_background(self):
-        """Create a gradient background image"""
-        image = Image.new('RGB', (self.width, self.height))
-        draw = ImageDraw.Draw(image)
-
+        """Create a vertical random gradient background image for testing."""
+        print("[DEBUG] Creating random gradient background...")
+        from random import randint
+        img = Image.new('RGB', (self.width, self.height))
+        draw = ImageDraw.Draw(img)
+        # Random start/end colors
+        r1, g1, b1 = randint(0,255), randint(0,255), randint(0,255)
+        r2, g2, b2 = randint(0,255), randint(0,255), randint(0,255)
         for y in range(self.height):
-            # Create a smooth gradient from dark to light blue
-            r = int(20 + (y / self.height) * 40)
-            g = int(40 + (y / self.height) * 60)
-            b = int(80 + (y / self.height) * 100)
+            r = int(r1 + (r2 - r1) * y / self.height)
+            g = int(g1 + (g2 - g1) * y / self.height)
+            b = int(b1 + (b2 - b1) * y / self.height)
             draw.line([(0, y), (self.width, y)], fill=(r, g, b))
-
-        return image
+        return img
 
     def _add_text_to_image(self, image, text):
         """Add text overlay to the image"""
@@ -121,55 +125,107 @@ class QwenAI:
 
         return image
 
-    def generate_video(self, text, audio_path, output_path, progress_callback=None):
-        """Generate a video with text overlay and animations using MoviePy and Llama/Ollama image background."""
+    def generate_sd_image(self, prompt, out_path):
+        """Generate an image using local Stable Diffusion, asset image, or random gradient based on config."""
+        import json
+        config_path = self.project_root / 'config.json'
+        use_bg = 'sd'  # default
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                use_bg = config.get('background_mode', 'sd')
+        print(f"[DEBUG] Background mode: {use_bg}")
+        if use_bg == 'gradient':
+            image = self._create_gradient_background()
+            image.save(out_path)
+            print(f"[DEBUG] Random gradient background saved to {out_path}")
+            return out_path
+        elif use_bg == 'asset':
+            from scripts.utils import get_random_background_asset
+            asset_path = get_random_background_asset()
+            if asset_path:
+                img = Image.open(asset_path).resize((self.width, self.height))
+                img.save(out_path)
+                print(f"[DEBUG] Asset background {asset_path} saved to {out_path}")
+                return out_path
+            else:
+                print("[WARN] No asset found, using gradient fallback.")
+                image = self._create_gradient_background()
+                image.save(out_path)
+                return out_path
+        # default: SD
+        print(f"[DEBUG] Generating SD image with prompt: {prompt}")
+        model_id = "runwayml/stable-diffusion-v1-5"
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"[DEBUG] Using device: {device}")
         try:
-            print("Creating video with MoviePy...")
+            pipe = StableDiffusionPipeline.from_pretrained(
+                model_id,
+                torch_dtype=torch.float16 if device=="cuda" else torch.float32
+            )
+            pipe = pipe.to(device)
+            generator = torch.Generator(device=device).manual_seed(42)
+            print("[DEBUG] Pipeline loaded. Generating image...")
+            result = pipe(
+                prompt,
+                negative_prompt="text, watermark, logo, signature, people, face, hands, nsfw, blurry, low quality, artifacts",
+                height=self.height,
+                width=self.width,
+                num_inference_steps=10,
+                guidance_scale=8.0,
+                generator=generator
+            )
+            image = result.images[0]
+            image.save(out_path)
+            try:
+                from PIL import Image as PILImage
+                img = PILImage.open(out_path).convert("RGB")
+                img.save(out_path)
+                print(f"[DEBUG] Image at {out_path} converted to RGB and saved again.")
+            except Exception as e:
+                print(f"[WARN] Could not convert image to RGB: {e}")
+            print(f"[DEBUG] SD image saved to {out_path}")
+            return out_path
+        except Exception as e:
+            print(f"[ERROR] Stable Diffusion image generation failed: {e}")
+            self.logger.error(f"Stable Diffusion image generation failed: {e}")
+            image = self._create_gradient_background()
+            image.save(out_path)
+            try:
+                from PIL import Image as PILImage
+                img = PILImage.open(out_path).convert("RGB")
+                img.save(out_path)
+                print(f"[DEBUG] Image at {out_path} converted to RGB and saved again.")
+            except Exception as e:
+                print(f"[WARN] Could not convert image to RGB: {e}")
+            print(f"[DEBUG] Fallback gradient image saved to {out_path}")
+            return out_path
+
+    def generate_video(self, text, audio_path, output_path, progress_callback=None):
+        """Generate a video with text overlay and animations using MoviePy and a Stable Diffusion generated background or a vertical blue gradient."""
+        try:
+            print(f"[DEBUG] Creating video with text: {text}")
+            print(f"[DEBUG] Audio path: {audio_path}")
+            print(f"[DEBUG] Output video path: {output_path}")
             self.logger.info("Creating animated video...")
 
             # Get audio duration first
             audio = AudioFileClip(audio_path)
             audio_duration = audio.duration
 
-            # Generate a prompt for the background image based on the quote
-            image_prompt = f"Create a beautiful, abstract, vertical background image that visually represents this quote: '{text}'. No text, just mood, color, and feeling. 9:16 aspect ratio."
-            print("Generating background image with Ollama...")
-            response = None
-            try:
-                response = self.client.generate(
-                    model="llava",
-                    prompt=image_prompt,
-                    stream=False,
-                    options={
-                        "image_size": 1024
-                    }
-                )
-            except Exception as e:
-                print(f"Ollama image generation failed: {e}")
+            # Generate background image using Stable Diffusion
+            prompt = f"A beautiful abstract vertical background, no text, 9:16 aspect ratio, vibrant colors, soft lighting"
+            background_img_path = os.path.join(os.path.dirname(output_path), 'background_sd.png')
+            print(f"[DEBUG] Generating background image at: {background_img_path}")
+            self.generate_sd_image(prompt, background_img_path)
+            print(f"[DEBUG] Background image generated.")
 
-            background_img_path = os.path.join(os.path.dirname(output_path), 'background_llama.png')
-            background_clip = None
-            if response and 'images' in response:
-                import base64
-                image_data = base64.b64decode(response['images'][0])
-                with open(background_img_path, 'wb') as f:
-                    f.write(image_data)
-                # Use the generated image as the background
-                background_clip = ImageClip(background_img_path).resize(height=self.height).set_duration(audio_duration)
-                # Center crop to match width
-                w, h = background_clip.size
-                if w > self.width:
-                    x1 = (w - self.width) // 2
-                    background_clip = background_clip.crop(x1=x1, y1=0, x2=x1+self.width, y2=self.height)
-                else:
-                    background_clip = background_clip.resize((self.width, self.height))
-            else:
-                print("Falling back to gradient background...")
-                # Fallback: simple dark gradient
-                from moviepy.video.VideoClip import ColorClip
-                background_clip = ColorClip(size=(self.width, self.height), color=(20, 30, 45), duration=audio_duration)
+            # Resize background using PIL (works with any MoviePy version)
+            img = Image.open(background_img_path)
+            img = img.resize((self.width, self.height))
+            img.save(background_img_path)
+            background_clip = ImageClip(background_img_path).with_duration(audio_duration).with_opacity(1)
 
-            # Create PIL image for text with dynamic effects
             def make_text_frame(t):
                 img = Image.new('RGBA', (self.width, self.height), (0, 0, 0, 0))
                 draw = ImageDraw.Draw(img)
@@ -219,12 +275,10 @@ class QwenAI:
                     draw.text((x, y), line, font=font, fill=text_color)
                     y += font_height * line_spacing
                 frame = np.array(img)
-                if frame.shape[2] == 4:
-                    rgb = frame[..., :3]
-                    alpha = frame[..., 3:4] / 255.0
-                    return rgb * alpha + (1 - alpha) * 0
-                return frame
+                return frame  # Preserve alpha channel for transparency
             txt_clip = VideoClip(make_text_frame, duration=audio_duration)
+            # Removed set_position and set_opacity, as they are not available for VideoClip in v2.x
+
             # Combine clips
             video = CompositeVideoClip([background_clip, txt_clip])
             # Set audio and write video
@@ -234,6 +288,7 @@ class QwenAI:
             print(f"Video successfully saved to {output_path}")
             if progress_callback:
                 progress_callback(100)
+            return True
         except Exception as e:
             self.logger.error(f"Error generating video: {e}")
             print(f"Error generating video: {e}")
@@ -274,13 +329,16 @@ class QwenAI:
 
     def generate_creative_quote(self, topic):
         """Generate a creative quote using the Mistral model"""
-        prompt = f"""Generate a short, inspiring quote about {topic}. 
-        The quote should be original, meaningful, and no longer than 15 words.
-        Return only the quote, without quotation marks or attribution."""
-        
+        import random
+        randomizer = random.randint(0, 99999)
+        prompt = f"""Generate a short, inspiring quote about {topic}.\nThe quote should be original, meaningful, and no longer than 15 words.\nReturn only the quote, without quotation marks or attribution.\nRandomizer: {randomizer}"""
+        print(f"[DEBUG] Quote prompt: {prompt}")
         try:
-            response = self.generate_text(prompt)
-            return response.strip() if response else None
+            response = self.client.generate(
+                model=self.model,
+                prompt=prompt
+            )
+            return response['response'].strip() if response else None
         except Exception as e:
             self.logger.error(f"Error generating quote: {str(e)}")
             return None

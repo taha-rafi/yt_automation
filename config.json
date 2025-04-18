@@ -19,5 +19,6 @@
             "max_attempts": 3,
             "delay_seconds": 5
         }
-    }
+    },
+  "background_mode": "gradient"
 }

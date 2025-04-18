@@ -2,7 +2,7 @@ import random
 import os
 import json
 from pathlib import Path
-from .qwen_ai import QwenAI
+from scripts.qwen_ai import QwenAI
 
 class AIScriptGenerator:
     def __init__(self):
@@ -38,8 +38,9 @@ class AIScriptGenerator:
         try:
             # Generate quote using Qwen AI
             quote = self.qwen.generate_creative_quote(topic)
+            print(f"[DEBUG] AI returned quote: {repr(quote)}")  # Debug print
 
-            if quote:
+            if quote and quote.strip():
                 quote = self._clean_generated_text(quote)
                 return quote, topic
 
