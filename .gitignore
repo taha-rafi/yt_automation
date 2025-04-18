@@ -36,3 +36,6 @@ credentials.json
 
 # Logs
 *.log
+
+# Uploads
+uploads/

@@ -43,7 +43,7 @@ class YouTubeUploader:
             logger.error(f"Error loading credentials: {str(e)}")
             return None
 
-    def upload_video(self, video_path, title, description, privacy_status="public", max_retries=3):
+    def upload_video(self, video_path, title, description, privacy_status="public", max_retries=3, thumbnail_path=None, tags=None):
         """Upload a video to YouTube"""
         try:
             creds = self.load_credentials()
@@ -58,13 +58,17 @@ class YouTubeUploader:
             )
 
             media = MediaFileUpload(video_path, resumable=True)
+            snippet = {
+                "title": title,
+                "description": description
+            }
+            if tags:
+                snippet["tags"] = tags
+
             request = youtube.videos().insert(
                 part="snippet,status",
                 body={
-                    "snippet": {
-                        "title": title,
-                        "description": description
-                    },
+                    "snippet": snippet,
                     "status": {
                         "privacyStatus": privacy_status
                     }
@@ -77,6 +81,16 @@ class YouTubeUploader:
                     logger.info(f"Upload attempt {attempt + 1}/{max_retries}")
                     response = request.execute()
                     logger.info(f"Video upload successful! Video ID: {response['id']}")
+                    # Upload thumbnail if provided
+                    if thumbnail_path and os.path.exists(thumbnail_path):
+                        try:
+                            youtube.thumbnails().set(
+                                videoId=response['id'],
+                                media_body=MediaFileUpload(thumbnail_path)
+                            ).execute()
+                            logger.info("Thumbnail uploaded successfully!")
+                        except Exception as thumb_e:
+                            logger.warning(f"Thumbnail upload failed: {thumb_e}")
                     return True
                 except Exception as e:
                     if attempt == max_retries - 1:
@@ -89,10 +103,10 @@ class YouTubeUploader:
             logger.error(f"Error setting up video upload: {str(e)}")
             return False
 
-def upload_to_youtube(video_file, title, description):
+def upload_to_youtube(video_file, title, description, thumbnail_path=None, tags=None):
     """Main upload function"""
     uploader = YouTubeUploader()
-    return uploader.upload_video(video_file, title, description)
+    return uploader.upload_video(video_file, title, description, thumbnail_path=thumbnail_path, tags=tags)
 
 if __name__ == "__main__":
     # Test video upload
