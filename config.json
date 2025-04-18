@@ -20,5 +20,8 @@
             "delay_seconds": 5
         }
     },
-  "background_mode": "gradient"
+    "background_mode": "sd",
+    "mistral_ai": {
+        "enabled": false
+    }
 }
